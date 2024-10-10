@@ -1,0 +1,141 @@
+#!/bin/bash
+
+# Set environment variables
+#**************************
+export AWS_REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region)
+export AVAILABILITY_ZONE=$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone)
+export SECURITY_GROUP=$(curl -s http://169.254.169.254/latest/meta-data/security-groups)
+export INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+
+export ARCH=$(dpkg --print-architecture)
+
+export DEFAULT_USER=ubuntu
+export DEFAULT_USER_HOME=/home/ubuntu
+
+export SWARM_NAME=$(echo ${swarm_name} | tr 'a-z' 'A-Z')
+
+# Update packages
+#****************
+apt-get update -y
+
+# Install aws cli
+#****************
+if [[ $ARCH == "x86_64" || $ARCH == "amd64" ]];
+then
+  export AWS_CLI_ARCH=x86_64
+else
+  export AWS_CLI_ARCH=aarch64
+fi
+
+apt-get install -y unzip
+curl https://awscli.amazonaws.com/awscli-exe-linux-$AWS_CLI_ARCH.zip -o /tmp/awscliv2.zip
+unzip /tmp/awscliv2.zip -d /opt
+/opt/aws/install
+rm /tmp/awscliv2.zip
+
+aws --version
+export AWS_CLI_FOUND=$?
+
+if [[ $AWS_CLI_FOUND == "0" ]];
+then
+  echo "AWS_CLI_STATUS=installed" >> /tmp/user-data-output.txt
+else
+  echo "AWS_CLI_STATUS=none" >> /tmp/user-data-output.txt
+fi
+
+# Download user-data-functions file from s3 bucket
+#*************************************************
+SWARM_CONFIG_FILES_S3_BUCKET_NAME=${swarm_config_files_s3_bucket_name}
+USER_DATA_FUNCTIONS_S3_OBJECT=${node_grp_user_data_functions_s3_object}
+USER_DATA_FUNCTIONS_FILE=/tmp/user-data-functions.sh
+
+aws s3 cp s3://$SWARM_CONFIG_FILES_S3_BUCKET_NAME/$USER_DATA_FUNCTIONS_S3_OBJECT $USER_DATA_FUNCTIONS_FILE
+
+# Call user-data-functions file
+#******************************
+ls /tmp | grep user-data-functions.sh
+
+USER_DATA_FUNCTIONS_FILE_FOUND=$?
+
+if [[ $USER_DATA_FUNCTIONS_FILE_FOUND == "0" ]];
+then
+  . /tmp/user-data-functions.sh
+else
+  echo "User-data-functions file not found."
+  exit 0
+fi
+
+# Set hostname
+#*************
+export NODE_GROUP_NAME=${node_grp_name}
+set_hostname
+
+# install JQuery
+#***************
+install_jquery
+
+# Install Docker
+#***************
+install_docker
+
+# Grant swarm services iam access
+#********************************
+export GRANT_SWARM_SERVICES_IAM_ACCESS=${grant_swarm_services_iam_access}
+grant_swarm_services_iam_access
+
+# Register private static ips of all mns
+#***************************************
+export NUM_OF_MN=${num_of_mn}
+
+if [[ $NUM_OF_MN == "7" ]];
+then
+  export MN_1_PRIVATE_EIP_NAME=${mn_1_private_eip_name}
+  export MN_2_PRIVATE_EIP_NAME=${mn_2_private_eip_name}
+  export MN_3_PRIVATE_EIP_NAME=${mn_3_private_eip_name}
+  export MN_4_PRIVATE_EIP_NAME=${mn_4_private_eip_name}
+  export MN_5_PRIVATE_EIP_NAME=${mn_5_private_eip_name}
+  export MN_6_PRIVATE_EIP_NAME=${mn_6_private_eip_name}
+  export MN_7_PRIVATE_EIP_NAME=${mn_7_private_eip_name}
+elif [[ $NUM_OF_MN == "5" ]];
+then
+  export MN_1_PRIVATE_EIP_NAME=${mn_1_private_eip_name}
+  export MN_2_PRIVATE_EIP_NAME=${mn_2_private_eip_name}
+  export MN_3_PRIVATE_EIP_NAME=${mn_3_private_eip_name}
+  export MN_4_PRIVATE_EIP_NAME=${mn_4_private_eip_name}
+  export MN_5_PRIVATE_EIP_NAME=${mn_5_private_eip_name}
+else
+  if [[ $NUM_OF_MN == "3" ]];
+  then
+    export MN_1_PRIVATE_EIP_NAME=${mn_1_private_eip_name}
+    export MN_2_PRIVATE_EIP_NAME=${mn_2_private_eip_name}
+    export MN_3_PRIVATE_EIP_NAME=${mn_3_private_eip_name}
+  else
+    export MN_1_PRIVATE_EIP_NAME=${mn_1_private_eip_name}
+  fi
+fi
+
+# Get wn join token
+#******************
+get_wn_join_token
+
+# Join wn to swarm
+#*****************
+join_wn_to_swarm
+
+# Notify Slack
+#*************
+ENABLE_NODE_GRP_STATUS_NOTIFICATION=${enable_node_grp_status_notification}
+
+if [[ $ENABLE_NODE_GRP_STATUS_NOTIFICATION == "true" ]];
+then
+  SLACK_WEBHOOK_URL_SSM_PARAMETER=${slack_webhook_url_ssm_parameter}
+  send_slack_notification
+else
+  echo "ENABLE_NODE_STATUS_NOTIFICATION=false"
+fi
+
+# Delete user-data-functions file
+#********************************
+rm $USER_DATA_FUNCTIONS_FILE
+
+######################################## APACHEPLAYGROUND™ ########################################
