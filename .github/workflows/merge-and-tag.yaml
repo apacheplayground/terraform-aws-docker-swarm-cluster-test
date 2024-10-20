@@ -42,13 +42,6 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Pull latest changes
-        id: pull-latest-changes
-        run: |
-          ls
-          git status
-          git pull origin
-
       - name: Get latest commit message
         id: get-latest-commit-message
         run: |
@@ -163,7 +156,7 @@ jobs:
 
           All notable changes to this project will be documented in this file.
 
-          ## ${{ env.NEXT_VERSION_TAG }} ($DATE)
+          ## v${{ env.NEXT_VERSION_TAG }} ($DATE)
 
           ### $CHANGELOG_HEADING
           * $CHANGELOG_MESSAGE
@@ -181,13 +174,11 @@ jobs:
 
           All notable changes to this project will be documented in this file.
 
-          ## ${{ env.NEXT_VERSION_TAG }} ($DATE)
+          ## v${{ env.NEXT_VERSION_TAG }} ($DATE)
 
-          Initial release version
+          * Initial release version
 
           EOF
-
-          ls
           fi
 
       - name: Tag and push next version
@@ -195,9 +186,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git status
-          git add .
-          git status
+          git add CHANGELOG.md
           git commit -m ${{ env.LATEST_COMMIT_MESSAGE_2 }}
           git tag -a v${{ env.NEXT_VERSION_TAG }} HEAD -m ${{ env.LATEST_COMMIT_MESSAGE_2 }}
           git push origin
