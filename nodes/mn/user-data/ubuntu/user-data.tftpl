@@ -1,0 +1,249 @@
+#!/bin/bash
+
+# Set environment variables
+#**************************
+export AWS_REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region)
+export AVAILABILITY_ZONE=$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone)
+export SECURITY_GROUP=$(curl -s http://169.254.169.254/latest/meta-data/security-groups)
+export INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+
+export ARCH=$(dpkg --print-architecture)
+
+export DEFAULT_USER=ubuntu
+export DEFAULT_USER_HOME=/home/ubuntu
+
+export SWARM_NAME=$(echo ${swarm_name} | tr 'a-z' 'A-Z')
+export SWARM_NAME_0=${swarm_name}
+export MN_INDEX=${mn_index}
+
+# Update packages
+#****************
+apt-get update -y
+echo "" >> /tmp/user-data-output.txt
+
+# Install aws cli
+#****************
+if [[ $ARCH == "x86_64" || $ARCH == "amd64" ]];
+then
+  export AWS_CLI_ARCH=x86_64
+else
+  export AWS_CLI_ARCH=aarch64
+fi
+
+apt-get install -y unzip
+curl https://awscli.amazonaws.com/awscli-exe-linux-$AWS_CLI_ARCH.zip -o /tmp/awscliv2.zip
+unzip /tmp/awscliv2.zip -d /opt
+/opt/aws/install
+rm /tmp/awscliv2.zip
+
+aws --version
+AWS_CLI_FOUND=$?
+
+if [[ $AWS_CLI_FOUND == "0" ]];
+then
+  echo "AWS_CLI_STATUS=installed" >> /tmp/user-data-output.txt
+else
+  echo "AWS_CLI_STATUS=none" >> /tmp/user-data-output.txt
+fi
+
+# Download config files from s3 bucket
+#*************************************
+export SWARM_CONFIG_FILES_S3_BUCKET_NAME=${swarm_config_files_s3_bucket_name}
+
+mkdir /tmp/config-files
+aws s3 cp s3://$SWARM_CONFIG_FILES_S3_BUCKET_NAME/ /tmp/config-files/ --recursive
+
+# Call user-data-functions file
+#******************************
+export USER_DATA_FUNCTIONS_S3_OBJECT_KEY=${node_user_data_functions_s3_object_key}
+export USER_DATA_FUNCTIONS_FILE=/tmp/config-files/$USER_DATA_FUNCTIONS_S3_OBJECT_KEY                 #user-data-functions.sh
+
+ls /tmp/config-files | grep $USER_DATA_FUNCTIONS_S3_OBJECT_KEY
+
+USER_DATA_FUNCTIONS_FILE_FOUND=$?
+
+if [[ $USER_DATA_FUNCTIONS_FILE_FOUND == "0" ]];
+then
+  . $USER_DATA_FUNCTIONS_FILE
+else
+  echo "User-data-functions file not found."
+  exit 0
+fi
+
+# Set hostname
+#*************
+export HOSTNAME=${node_name}
+set_hostname
+
+# install JQuery
+#***************
+install_jquery
+
+# Install Docker
+#***************
+install_docker
+
+<<COMMENT
+# Label node docker engine
+#*************************
+label_node_docker_engine
+COMMENT
+
+# Mount swarm-data-store
+#***********************
+export SWARM_DATA_STORE_DNS=${swarm_data_store_dns}
+export SWARM_DATA_STORE_MOUNT_DIR=/mnt/swarm-data
+mount_swarm_data_store
+
+# Attach public eip address
+#**************************
+export NODE_PUBLIC_EIP_ALLOCATION_ID=${node_public_eip_allocation_id}
+attach_public_eip_address
+
+# Attach private eip address
+#****************************
+export NODE_PRIVATE_EIP_ENI_ID=${node_private_eip_eni_id}
+export NODE_PRIVATE_EIP=${node_private_eip}
+export NODE_SUBNET_MASK=${node_subnet_mask}
+export NODE_SUBNET_ENI_IP=${node_subnet_eni_ip}
+attach_private_eip_address
+
+# Register private eips of all mns
+#*********************************
+export NUM_OF_MN=${num_of_mn}
+
+if [[ $NUM_OF_MN == "7" ]];
+then
+  export MN_1_PRIVATE_EIP_NAME=${mn_1_private_eip_name}
+  export MN_2_PRIVATE_EIP_NAME=${mn_2_private_eip_name}
+  export MN_3_PRIVATE_EIP_NAME=${mn_3_private_eip_name}
+  export MN_4_PRIVATE_EIP_NAME=${mn_4_private_eip_name}
+  export MN_5_PRIVATE_EIP_NAME=${mn_5_private_eip_name}
+  export MN_6_PRIVATE_EIP_NAME=${mn_6_private_eip_name}
+  export MN_7_PRIVATE_EIP_NAME=${mn_7_private_eip_name}
+elif [[ $NUM_OF_MN == "5" ]];
+then
+  export MN_1_PRIVATE_EIP_NAME=${mn_1_private_eip_name}
+  export MN_2_PRIVATE_EIP_NAME=${mn_2_private_eip_name}
+  export MN_3_PRIVATE_EIP_NAME=${mn_3_private_eip_name}
+  export MN_4_PRIVATE_EIP_NAME=${mn_4_private_eip_name}
+  export MN_5_PRIVATE_EIP_NAME=${mn_5_private_eip_name}
+else
+  if [[ $NUM_OF_MN == "3" ]];
+  then
+    export MN_1_PRIVATE_EIP_NAME=${mn_1_private_eip_name}
+    export MN_2_PRIVATE_EIP_NAME=${mn_2_private_eip_name}
+    export MN_3_PRIVATE_EIP_NAME=${mn_3_private_eip_name}
+  else
+    echo "Do nothing."
+  fi
+fi
+
+# Join mn_1 to 1-mn cluster
+#**************************
+join_mn_1_to_1_mn_cluster
+
+
+# Join mn_1 to 3-mn cluster
+#**************************
+join_mn_1_to_3_mn_cluster
+
+# Join mn_2 to 3-mn cluster
+#**************************
+join_mn_2_to_3_mn_cluster
+
+# Join mn_3 to 3-mn cluster
+#**************************
+join_mn_3_to_3_mn_cluster
+
+
+# Join mn_1 to 5-mn cluster
+#**************************
+join_mn_1_to_5_mn_cluster
+
+# Join mn_2 to 5-mn cluster
+#**************************
+join_mn_2_to_5_mn_cluster
+
+# Join mn_3 to 5-mn cluster
+#**************************
+join_mn_3_to_5_mn_cluster
+
+# Join mn_4 to 5-mn cluster
+#**************************
+join_mn_4_to_5_mn_cluster
+
+# Join mn_5 to 5-mn cluster
+#**************************
+join_mn_5_to_5_mn_cluster
+
+
+# Join mn_1 to 7-mn cluster
+#**************************
+join_mn_1_to_7_mn_cluster
+
+# Join mn_2 to 7-mn cluster
+#**************************
+join_mn_2_to_7_mn_cluster
+
+# Join mn_3 to 7-mn cluster
+#**************************
+join_mn_3_to_7_mn_cluster
+
+# Join mn_4 to 7-mn cluster
+#**************************
+join_mn_4_to_7_mn_cluster
+
+# Join mn_5 to 7-mn cluster
+#**************************
+join_mn_5_to_7_mn_cluster
+
+# Join mn_6 to 7-mn cluster
+#**************************
+join_mn_6_to_7_mn_cluster
+
+# Join mn_7 to 7-mn cluster
+#**************************
+join_mn_7_to_7_mn_cluster
+
+
+# Grant swarm services iam access
+#********************************
+export GRANT_SWARM_SERVICES_IAM_ACCESS=${grant_swarm_services_iam_access}
+grant_swarm_services_iam_access
+
+# Enable swarm services autoscaling
+#**********************************
+export ENABLE_SWARM_SERVICES_AUTOSCALING=${enable_swarm_services_autoscaling}
+deploy_service_autoscaler
+
+# Create dashboards directory
+#****************************
+export DASHBOARDS_DIR=$SWARM_DATA_STORE_MOUNT_DIR/dashboards
+create_dashboards_directory
+
+# Deploy portainer stack
+#***********************
+export PORTAINER_DIR=$DASHBOARDS_DIR/portainer
+export PORTAINER_SERVER_PORT=9000
+export PORTAINER_AGENT_PORT=9001
+deploy_portainer_stack
+
+# Notify Slack
+#*************
+export ENABLE_NODE_STATUS_NOTIFICATION=${enable_node_status_notification}
+
+if [[ $ENABLE_NODE_STATUS_NOTIFICATION == "true" ]];
+then
+  SLACK_WEBHOOK_URL_SSM_PARAMETER=${slack_webhook_url_ssm_parameter}
+  send_slack_notification
+else
+  echo "ENABLE_NODE_STATUS_NOTIFICATION=false"
+fi
+
+# Delete user-data-functions file
+#********************************
+rm $USER_DATA_FUNCTIONS_FILE
+echo "" >> /tmp/user-data-output.txt
+
+######################################## APACHEPLAYGROUND™ ########################################
